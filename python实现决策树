@@ -1,0 +1,632 @@
+# @Time    : 2019/6/29 16:38
+# @Author  : 程彭洲
+# @File    : hiatusTree.py
+# @Software: PyCharm
+#coding:utf-8
+
+from pandas import Series,DataFrame
+import collections
+from math import log
+import operator
+from pylab import mpl
+import matplotlib.pylab as plt
+import matplotlib
+# 能够显示中文
+from matplotlib.font_manager import _rebuild
+_rebuild()
+plt.rcParams['font.sans-serif'] = ['SimHei']
+
+# 分叉节点，也就是决策节点
+decisionNode = dict(boxstyle="sawtooth", fc="0.8")
+
+# 叶子节点
+leafNode = dict(boxstyle="round4", fc="0.8")
+
+# 箭头样式
+arrow_args = dict(arrowstyle="<-")
+
+
+def calcShannonEnt(dataSet, Wx):
+    """
+    计算给定数据集的信息熵(香农熵)，需要考虑权重
+    :param dataSet:数据集
+    :param Wx:数据集对应的权重
+    :return:
+    """
+    # 计算出数据集的总数
+    numEntries = len(dataSet)
+
+    # 得到类别的总集合
+    classify = [example[-1] for example in dataSet]
+
+    # 去重，得到唯一的分类集合
+    classify = set(classify)
+
+    # 用来统计标签
+    labelCounts = collections.defaultdict(int)
+
+    # 遍历所有的分类集合
+    for currentClassify in classify:
+        # 循环遍历一遍数据集，找到与当前分类相等的数据权重
+        for i in range(numEntries):
+            example = dataSet[i]
+            # 如果此时的数据等于当前的分类，找到此时数据的权重加入其中
+            if example[-1] == currentClassify:
+                labelCounts[currentClassify] += Wx[i]
+
+    # 默认的信息熵
+    shannonEnt = 0.0
+
+    for key in labelCounts:
+        # 计算当前分类的权重
+        prob = float(labelCounts[key]) / float(sum(Wx))
+
+        # 以2为底求对数
+        shannonEnt -= prob * log(prob, 2)
+
+    return shannonEnt
+
+
+def splitDataSet(dataSet, axis, value, Wx):
+    """
+    按照给定的特征值，将数据集划分
+    :param dataSet: 数据集
+    :param axis: 给定特征值的坐标
+    :param value: 给定特征值满足的条件，只有给定特征值等于这个value的时候才会返回
+    :param Wx: 数据集对应的权重
+    :return:
+    """
+    # 创建一个新的列表，防止对原来的列表进行修改
+    retDataSet = []
+
+    # 子集的权重列表
+    subWx = []
+
+    # 遍历整个数据集
+    for i in range(len(dataSet)):
+        featVec = dataSet[i]
+        # 如果给定特征值等于想要的特征值
+        if featVec[axis] == value:
+            # 将该特征值前面的内容保存起来
+            reducedFeatVec = featVec[:axis]
+            # 将该特征值后面的内容保存起来，所以将给定特征值给去掉了
+            reducedFeatVec.extend(featVec[axis + 1:])
+            # 添加到返回列表中
+            retDataSet.append(reducedFeatVec)
+            subWx.append(Wx[i])
+
+    return retDataSet, subWx
+
+
+def calcInfoGain(dataSet , i, baseEntropy, Wx):
+    """
+    计算信息增益
+    :param dataSet: 数据集
+    :param featList: 当前特征列表
+    :param i: 当前特征值下标
+    :param baseEntropy: 基础信息熵
+    :param subWx: 子集权重
+    :return:
+    """
+    # 得到总的特征列表
+    featList = [example[i] for example in dataSet]
+
+    # 将当前特征唯一化，也就是说当前特征值中共有多少种
+    uniqueVals = set(featList)
+
+    # 新的熵，代表当前特征值的熵
+    newEntropy = 0.0
+
+    # 遍历现在有的特征的可能性
+    for value in uniqueVals:
+        # 在全部数据集的当前特征位置上，找到该特征值等于当前值的集合，并且得到对应的权重
+        subDataSet, subWx = splitDataSet(dataSet=dataSet, axis=i, value=value, Wx=Wx)
+
+        # 计算出此时子集的信息熵
+        subEntropy = calcShannonEnt(subDataSet, subWx)
+
+        # 计算出当前特征之的权重
+        prob = sum(subWx) / sum(Wx)
+
+        # 计算出带权重的信息增益
+        newEntropy += prob * subEntropy
+
+    # 计算出“信息增益”
+    infoGain = baseEntropy - newEntropy
+
+    return infoGain
+
+
+def chooseBestFeatureToSplit(dataSet, labels, Wx):
+    """
+    选择最好的分类标签，根据信息增益值来计算，可以处理缺失值
+    :param dataSet: 需要划分的数据集
+    :param labels: 特征值列表
+    :param Wx: 样本的权重
+    :return:
+    """
+    # 得到数据的特征值总数
+    numFeatures = len(dataSet[0]) - 1
+
+    # 得到样本的总数
+    dataSetSum = len(dataSet)
+
+    # 基础信息增益为0.0
+    bestInfoGain = 0.0
+
+    # 最好的特征值
+    bestFeature = -1
+
+    # 循环遍历所有的特征值
+    for i in range(numFeatures):
+
+        # 除去当前特征值的缺失值之后的子集
+        subDataSet = []
+
+        # 子集的权重
+        subWx = []
+
+        # 计算子集的权重
+        for j in range(dataSetSum):
+            example = dataSet[j]
+            if example[i] != '-':
+                subDataSet.append(example)
+                subWx.append(Wx[j])
+
+        # 计算子集的信息熵
+        baseEntropy = calcShannonEnt(subDataSet, subWx)
+
+        # 计算出权重
+        prob = sum(subWx) / sum(Wx)
+
+        # 计算当前特征值的信息增益
+        infoGain = prob * calcInfoGain(subDataSet, i, baseEntropy, subWx)
+        # print('当前的特征值为:' + labels[i])
+        # print('当前的信息增益值为：' + str(infoGain))
+        # 记录此时最高的信息增益
+        if infoGain > bestInfoGain:
+            bestInfoGain = infoGain
+            bestFeature = i
+
+    # print('最好的划分特征值：' + labels[bestFeature])
+    # print('此时的信息增益值为：' + str(bestInfoGain))
+    return bestFeature
+
+
+def majorityCnt(classList):
+    """
+    找到次数最多的类别标签
+    :param classList:
+    :return:
+    """
+    # 用来统计标签的票数
+    classCount = collections.defaultdict(int)
+
+    # 遍历所有的标签类别
+    for vote in classList:
+        classCount[vote] += 1
+
+    # 从大到小排序
+    sortedClassCount = sorted(classCount.items(), key=operator.itemgetter(1), reverse=True)
+
+    # 返回次数最多的标签
+    return sortedClassCount[0][0]
+
+
+def createTree(dataSet, labels, Wx):
+    """
+    创建决策树
+    :param dataSet: 数据集
+    :param labels: 特征标签
+    :return:
+    """
+    # 拿到所有数据集的分类标签
+    classList = [example[-1] for example in dataSet]
+
+    # 统计第一个标签出现的次数，与总标签个数比较，如果相等则说明当前列表中全部都是一种标签，此时停止划分
+    if classList.count(classList[0]) == len(classList):
+        return classList[0]
+
+    # 计算第一行有多少个数据，如果只有一个的话说明所有的特征属性都遍历完了，剩下的一个就是类别标签
+    if len(dataSet[0]) == 1:
+        # 返回剩下标签中出现次数较多的那个
+        return majorityCnt(classList)
+
+    # 选择最好的划分特征，得到该特征的下标
+    bestFeat = chooseBestFeatureToSplit(dataSet=dataSet, labels=labels, Wx=Wx)
+
+    # 得到最好特征的名称
+    bestFeatLabel = labels[bestFeat]
+
+    # 使用一个字典来存储树结构，分叉处为划分的特征名称
+    myTree = {bestFeatLabel: {}}
+
+    # 将本次划分的特征值从列表中删除掉
+    del(labels[bestFeat])
+
+    # 得到当前特征标签的所有可能值
+    featValues = [example[bestFeat] for example in dataSet if example[bestFeat] != '-']
+
+    # 唯一化，去掉重复的特征值
+    uniqueVals = set(featValues)
+
+    # 非缺失值的权重
+    noHiatusWx = []
+
+    # 遍历数据集，找到当前划分的特征值的所有非缺失值
+    for i in range(len(dataSet)):
+        example = dataSet[i]
+        if example[bestFeat] != '-':
+            noHiatusWx.append(Wx[i])
+
+    # 遍历所有的特征值
+    for value in uniqueVals:
+        # 得到剩下的标签
+        subLabels = labels[:]
+        # 得到对应的特征值子集和权重
+        subDataSet, subWx = splitDataSet(dataSet=dataSet, axis=bestFeat, value=value, Wx=Wx)
+        # 用来保存缺失值的样本
+        hiatusList = []
+        # 保存对应的权重
+        hiatusWx = []
+        # 遍历所有的数据集，找到缺失值并计算权重
+        for i in range(len(dataSet)):
+            example = dataSet[i]
+            # 找到缺失值
+            if example[bestFeat] == '-':
+                hiatusExample = example[:bestFeat]
+                hiatusExample.extend(example[bestFeat+1:])
+                # 添加到子集中
+                hiatusList.append(hiatusExample)
+                # 缺失值的新权重
+                newWx = Wx[i]
+                # 重新计算权重
+                newWx *= (sum(subWx)/sum(noHiatusWx))
+                # 添加到子集权重中
+                hiatusWx.append(newWx)
+        # 将其添加到子集中
+        for i in range(len(hiatusList)):
+            subDataSet.append(hiatusList[i])
+            subWx.append(hiatusWx[i])
+
+        # print('当前划分点：' + bestFeatLabel + '，对应的特征值：' + value)
+        # print(subDataSet)
+        # print(subWx)
+
+        # 递归调用
+        subTree = createTree(subDataSet, subLabels, subWx)
+        myTree[bestFeatLabel][value] = subTree
+    return myTree
+
+
+def createDataSet():
+    """
+    创建测试的数据集
+    :return:
+    """
+    dataSet = [
+        # 1
+        ['-', '蜷缩', '浊响', '清晰', '凹陷', '硬滑', '好瓜'],
+        # 2
+        ['乌黑', '蜷缩', '沉闷', '清晰', '凹陷', '-', '好瓜'],
+        # 3
+        ['乌黑', '蜷缩', '-', '清晰', '凹陷', '硬滑', '好瓜'],
+        # 4
+        ['青绿', '蜷缩', '沉闷', '清晰', '凹陷', '硬滑', '好瓜'],
+        # 5
+        ['-', '蜷缩', '浊响', '清晰', '凹陷', '硬滑', '好瓜'],
+        # 6
+        ['青绿', '稍蜷', '浊响', '清晰', '-', '软粘', '好瓜'],
+        # 7
+        ['乌黑', '稍蜷', '浊响', '稍糊', '稍凹', '软粘', '好瓜'],
+        # 8
+        ['乌黑', '稍蜷', '浊响', '-', '稍凹', '硬滑', '好瓜'],
+
+        # ----------------------------------------------------
+        # 9
+        ['乌黑', '-', '沉闷', '稍糊', '稍凹', '硬滑', '坏瓜'],
+        # 10
+        ['青绿', '硬挺', '清脆', '-', '平坦', '软粘', '坏瓜'],
+        # 11
+        ['浅白', '硬挺', '清脆', '模糊', '平坦', '-', '坏瓜'],
+        # 12
+        ['浅白', '蜷缩', '-', '模糊', '平坦', '软粘', '坏瓜'],
+        # 13
+        ['-', '稍蜷', '浊响', '稍糊', '凹陷', '硬滑', '坏瓜'],
+        # 14
+        ['浅白', '稍蜷', '沉闷', '稍糊', '凹陷', '硬滑', '坏瓜'],
+        # 15
+        ['乌黑', '稍蜷', '浊响', '清晰', '-', '软粘', '坏瓜'],
+        # 16
+        ['浅白', '蜷缩', '浊响', '模糊', '平坦', '硬滑', '坏瓜'],
+        # 17
+        ['青绿', '-', '沉闷', '稍糊', '稍凹', '硬滑', '坏瓜']
+    ]
+
+    # 特征值列表
+    labels = ['色泽', '根蒂', '敲击', '纹理', '脐部', '触感']
+
+    # 各个样本的权重
+    Wx = []
+    for i in range(len(dataSet)):
+        Wx.append(1)
+
+    # 特征对应的所有可能的情况
+    labels_full = {}
+
+    for i in range(len(labels)):
+        labelList = [example[i] for example in dataSet if example[i] != '-']
+        uniqueLabel = set(labelList)
+        labels_full[labels[i]] = uniqueLabel
+
+    return dataSet, labels, labels_full, Wx
+
+
+def makeTreeFull(myTree, labels_full, default):
+    """
+    将树中的不存在的特征标签进行补全，补全为父节点中出现最多的类别
+    :param myTree: 生成的树
+    :param labels_full: 特征的全部标签
+    :param parentClass: 父节点中所含最多的类别
+    :param default: 如果缺失标签中父节点无法判断类别则使用该值
+    :return:
+    """
+    # 这里所说的父节点就是当前根节点，把当前根节点下不存在的特征标签作为子节点
+
+    # 拿到当前的根节点
+    root_key = list(myTree.keys())[0]
+
+    # 拿到根节点下的所有分类，可能是子节点（好瓜or坏瓜）也可能不是子节点（再次划分的属性值）
+    sub_tree = myTree[root_key]
+
+    # 如果是叶子节点就结束
+    if isinstance(sub_tree, str):
+        return
+
+    # 找到使用当前节点分类下最多的种类，该分类结果作为新特征标签的分类，如：色泽下面没有浅白则用色泽中有的青绿分类作为浅白的分类
+    root_class = []
+    # 把已经分好类的结果记录下来
+    for sub_key in sub_tree.keys():
+        if isinstance(sub_tree[sub_key], str):
+            root_class.append(sub_tree[sub_key])
+
+    # 找到本层出现最多的类别，可能会出现相同的情况取其一
+    if len(root_class):
+        most_class = collections.Counter(root_class).most_common(1)[0][0]
+    else:
+        most_class = None# 当前节点下没有已经分类好的属性
+    # print(most_class)
+
+    # 循环遍历全部特征标签，将不存在标签添加进去
+    for label in labels_full[root_key]:
+        if label not in sub_tree.keys():
+            if most_class is not None:
+                sub_tree[label] = most_class
+            else:
+                sub_tree[label] = default
+
+    # 递归处理
+    for sub_key in sub_tree.keys():
+        if isinstance(sub_tree[sub_key], dict):
+            makeTreeFull(myTree=sub_tree[sub_key], labels_full=labels_full, default=default)
+
+
+# 以下内容为原来的思路，无需理会，以防万一基于保留观察
+'''def makeTreeFull(myTree, labels_full, parentClass, default):
+    """
+    将数中的不存在的特征标签进行补全，补全为父节点中出现最多的类别
+    :param myTree: 生成的树
+    :param labels_full: 特征的全部标签
+    :param parentClass: 父节点中所含最多的类别
+    :param default: 如果父节点没有类别，而此时又有缺失的标签，默认标签分类设置为default
+    :return:
+    """
+    # 拿到当前的根节点
+    root_key = list(myTree.keys())[0]
+    # 得到根节点对应的子树，也就是key对应的内容
+    sub_tree = myTree[root_key]
+    # 如果是叶子节点就结束
+    if isinstance(sub_tree, str):
+        return
+    # 循环遍历全部特征标签，将不存在标签添加进去
+    for label in labels_full[root_key]:
+        if label not in sub_tree.keys():
+            # 如果此时父标签最多的分类不为None，则将新的标签设置为父标签
+            if parentClass is not None:
+                sub_tree[label] = parentClass
+            # 否则设置为default
+            else:
+                sub_tree[label] = default
+    # 当前层对应的分类列表
+    current_class = []
+    # 循环遍历一下子树，找到类别最多的那个，如果此时没有分类的话就是None
+    for sub_key in sub_tree.keys():
+        if isinstance(sub_tree[sub_key], str):
+            current_class.append(sub_tree[sub_key])
+    # 找到本层出现最多的类别，作为parentLabel传递给下一次递归
+    if len(current_class):
+        most_class = collections.Counter(current_class).most_common(1)[0][0]
+    else:
+        most_class = None
+    # 递归处理
+    for sub_key in sub_tree.keys():
+        if isinstance(sub_tree[sub_key], dict):
+            makeTreeFull(myTree=sub_tree[sub_key], labels_full=labels_full, parentClass=most_class, default=default)
+'''
+def plotNode(nodeTxt, centerPt, parentPt, nodeType):
+    """
+    绘制一个节点
+    :param nodeTxt: 描述该节点的文本信息
+    :param centerPt: 文本的坐标
+    :param parentPt: 点的坐标，这里也是指父节点的坐标
+    :param nodeType: 节点类型,分为叶子节点和决策节点
+    :return:
+    """
+    createPlot.ax1.annotate(nodeTxt, xy=parentPt, xycoords='axes fraction',
+                            xytext=centerPt, textcoords='axes fraction',
+                            va="center", ha="center", bbox=nodeType, arrowprops=arrow_args)
+
+
+def getNumLeafs(myTree):
+    """
+    获取叶节点的数目
+    :param myTree:
+    :return:
+    """
+    # 统计叶子节点的总数
+    numLeafs = 0
+
+    # 得到当前第一个key，也就是根节点
+    firstStr = list(myTree.keys())[0]
+
+    # 得到第一个key对应的内容
+    secondDict = myTree[firstStr]
+
+    # 递归遍历叶子节点
+    for key in secondDict.keys():
+        # 如果key对应的是一个字典，就递归调用
+        if type(secondDict[key]).__name__ == 'dict':
+            numLeafs += getNumLeafs(secondDict[key])
+        # 不是的话，说明此时是一个叶子节点
+        else:
+            numLeafs += 1
+    return numLeafs
+
+
+def getTreeDepth(myTree):
+    """
+    得到数的深度层数
+    :param myTree:
+    :return:
+    """
+    # 用来保存最大层数
+    maxDepth = 0
+
+    # 得到根节点
+    firstStr = list(myTree.keys())[0]
+
+    # 得到key对应的内容
+    secondDic = myTree[firstStr]
+
+    # 遍历所有子节点
+    for key in secondDic.keys():
+        # 如果该节点是字典，就递归调用
+        if type(secondDic[key]).__name__ == 'dict':
+            # 子节点的深度加1
+            thisDepth = 1 + getTreeDepth(secondDic[key])
+
+        # 说明此时是叶子节点
+        else:
+            thisDepth = 1
+
+        # 替换最大层数
+        if thisDepth > maxDepth:
+            maxDepth = thisDepth
+
+    return maxDepth
+
+
+def plotMidText(cntrPt, parentPt, txtString):
+    """
+    计算出父节点和子节点的中间位置，填充信息
+    :param cntrPt: 子节点坐标
+    :param parentPt: 父节点坐标
+    :param txtString: 填充的文本信息
+    :return:
+    """
+    # 计算x轴的中间位置
+    xMid = (parentPt[0]-cntrPt[0])/3.0 + cntrPt[0]
+    # 计算y轴的中间位置
+    yMid = (parentPt[1]-cntrPt[1])/3.0 + cntrPt[1]
+    # 进行绘制
+    createPlot.ax1.text(xMid, yMid, txtString)
+
+
+def plotTree(myTree, parentPt, nodeTxt):
+    """
+    绘制出树的所有节点，递归绘制
+    :param myTree: 树
+    :param parentPt: 父节点的坐标
+    :param nodeTxt: 节点的文本信息
+    :return:
+    """
+    # 计算叶子节点数
+    numLeafs = getNumLeafs(myTree=myTree)
+
+    # 计算树的深度
+    depth = getTreeDepth(myTree=myTree)
+
+    # 得到根节点的信息内容
+    firstStr = list(myTree.keys())[0]
+
+    # 计算出当前根节点在所有子节点的中间坐标,也就是当前x轴的偏移量加上计算出来的根节点的中心位置作为x轴（比如说第一次：初始的x偏移量为：-1/2W,计算出来的根节点中心位置为：(1+W)/2W，相加得到：1/2），当前y轴偏移量作为y轴
+    cntrPt = (plotTree.xOff + (1.0 + float(numLeafs))/2.0/plotTree.totalW, plotTree.yOff)
+
+    # 绘制该节点与父节点的联系
+    plotMidText(cntrPt, parentPt, nodeTxt)
+
+    # 绘制该节点
+    plotNode(firstStr, cntrPt, parentPt, decisionNode)
+
+    # 得到当前根节点对应的子树
+    secondDict = myTree[firstStr]
+
+    # 计算出新的y轴偏移量，向下移动1/D，也就是下一层的绘制y轴
+    plotTree.yOff = plotTree.yOff - 1.0/plotTree.totalD
+
+    # 循环遍历所有的key
+    for key in secondDict.keys():
+        # 如果当前的key是字典的话，代表还有子树，则递归遍历
+        if isinstance(secondDict[key], dict):
+            plotTree(secondDict[key], cntrPt, str(key))
+        else:
+            # 计算新的x轴偏移量，也就是下个叶子绘制的x轴坐标向右移动了1/W
+            plotTree.xOff = plotTree.xOff + 1.0/plotTree.totalW
+            # 打开注释可以观察叶子节点的坐标变化
+            # print((plotTree.xOff, plotTree.yOff), secondDict[key])
+            # 绘制叶子节点
+            plotNode(secondDict[key], (plotTree.xOff, plotTree.yOff), cntrPt, leafNode)
+            # 绘制叶子节点和父节点的中间连线内容
+            plotMidText((plotTree.xOff, plotTree.yOff), cntrPt, str(key))
+
+    # 返回递归之前，需要将y轴的偏移量增加，向上移动1/D，也就是返回去绘制上一层的y轴
+    plotTree.yOff = plotTree.yOff + 1.0/plotTree.totalD
+
+
+def createPlot(inTree):
+    """
+    需要绘制的决策树
+    :param inTree: 决策树字典
+    :return:
+    """
+    # 创建一个图像
+    fig = plt.figure(1, facecolor='white')
+    fig.clf()
+    axprops = dict(xticks=[], yticks=[])
+    createPlot.ax1 = plt.subplot(111, frameon=False, **axprops)
+    # 计算出决策树的总宽度
+    plotTree.totalW = float(getNumLeafs(inTree))
+    # 计算出决策树的总深度
+    plotTree.totalD = float(getTreeDepth(inTree))
+    # 初始的x轴偏移量，也就是-1/2W，每次向右移动1/W，也就是第一个叶子节点绘制的x坐标为：1/2W，第二个：3/2W，第三个：5/2W，最后一个：(W-1)/2W
+    plotTree.xOff = -0.5/plotTree.totalW
+    # 初始的y轴偏移量，每次向下或者向上移动1/D
+    plotTree.yOff = 1.0
+    # 调用函数进行绘制节点图像
+    plotTree(inTree, (0.5, 1.0), '')
+    # 绘制
+    plt.show()
+
+
+if __name__ == '__main__':
+    """
+    处理存在缺失值的决策树
+    """
+    dataSet, labels, labels_full, Wx = createDataSet()
+    # chooseBestFeatureToSplit(dataSet, labels, Wx)
+    myTree = createTree(dataSet, labels, Wx)
+    # myTree = {'纹理': {'稍糊': {'敲击': {'清脆': '坏瓜', '浊响': '坏瓜', '沉闷': '好瓜'}}, '模糊': {'色泽': {'青绿': '好瓜', '浅白': '坏瓜'}}}}
+    # treePlotter.createPlot(myTree)
+    # labels_full = {'纹理': {'稍糊', '模糊'}, '敲击': {'清脆', '沉闷', '浊响'}, '色泽': {'乌黑', '青绿', '浅白'}}
+    makeTreeFull(myTree=myTree, labels_full=labels_full, default='未知')
+    createPlot(myTree)
