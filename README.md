@@ -7,5 +7,5 @@ pip install sklearn, matplotlib
 # KNN
 
 # K-Means
-
+![K-means result](https://github.com/520zyzy/Machine-Learning/blob/master/Result/K-Means.png)
 
